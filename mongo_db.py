@@ -1,7 +1,7 @@
 from pymongo import MongoClient
 
 
-def db_connection(collection="games"):
+def db_connection(collection="repacks"):
     client = MongoClient("localhost", 27017)
 
     with open("secrets\\db_name.txt", "r") as f:

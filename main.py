@@ -7,15 +7,14 @@ def to_year_month(year: int, month: int) -> str:
 
 
 def get_repack_wrapper(start_date: str, end_date: str):
-    # runs backwars through each month given the dates provided (given in "yyyy-mm" format)
-    # runs the scraper, parser, and database manager to add the entries
-    # end date is not inclusive
+    # Runs backwars through each month given the dates provided (given in "yyyy-mm" format).
+    # Runs the scraper, parser, and database manager to add the entries.
+    # End date is not inclusive.
     [year, month] = [int(x) for x in start_date.split("-")]
     [end_year, end_month] = [int(x) for x in end_date.split("-")]
 
     while (year, month) != (end_year, end_month):
         year_month = to_year_month(year, month)
-        print(f"Scraping and parsing entries for {year_month}")
 
         repacks = get_repacks(year_month)
 
@@ -30,4 +29,5 @@ def get_repack_wrapper(start_date: str, end_date: str):
             year -= 1
 
 
-get_repack_wrapper("2020-12", "2016-06")
+# Go through all of the releases between Sept 2023 and July 2016.
+get_repack_wrapper("2023-09", "2016-06")

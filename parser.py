@@ -1,4 +1,5 @@
 from bs4 import BeautifulSoup, element
+import datetime
 
 
 def find(response_text: str) -> list[element.Tag]:
@@ -7,56 +8,142 @@ def find(response_text: str) -> list[element.Tag]:
     return repacks
 
 
-def parse(repack_html: element.Tag, redact=False) -> dict:
-    a_tag = repack_html.find("h1", class_="entry-title").findChild("a")
-    title = a_tag.string
-    link = a_tag.attrs["href"]
+def parse_error(error_code: int, title: str | None) -> str:
+    # Used for error logging
+    # TODO: Does python have enums? If so then refactor.
+    match error_code:
+        case 0:
+            return f"ERROR while parsing '{title}':\
+                \n> search for `h1.entry-title` did not return a Tag"
+        case 1:
+            return f"ERROR while parsing '{title}':\
+                \n> search for `h1.entry-title > ... > a` did not return a Tag"
+        case 2:
+            return f"ERROR while parsing '{title}':\
+                \n> search for `time.entry-date` did not return a Tag"
+        case 3:
+            return f"ERROR while parsing '{title}':\
+                \n> search for `h3 > span` did not return a Tag"
+        case 4:
+            return f"ERROR while parsing '{title}':\
+                \n> search for `div.entry-content > ... > span`\
+                did not return a Tag"
+        case 5:
+            return f"ERROR while parsing '{title}':\
+                \n> release number could not be parsed"
+        case 6:
+            return f"ERROR while parsing '{title}':\
+                \n> manual release number could not be parsed or was skipped"
+        case 7:
+            return f"ERROR while parsing '{title}':\
+                \n> search for `div.entry-content > ... > p`\
+                did not return a Tag"
+        case _:
+            return f"ERROR while parsing '{title}':\
+            \n> < unknown error code >"
 
-    upload_date_str = repack_html.find(
-        "time", class_="entry-date").attrs["datetime"][:10]
-    upload_date = [int(x) for x in upload_date_str.split("-")]
 
-    entry_content = repack_html.find(
-        "div", class_="entry-content")  # .find("strong").string
-
-    # Sometimes this has extra formatting and this fails
-    try:
-        release_num = entry_content.findChild(
-            "h3").findChild("span").string.split(" ")[0][1:]
-    except:
-        print(f"ERROR: Failed to parse release number for '{title}'")
+def manual_release_num(title: str | None, link: str) -> str | None:
+    print(parse_error(5, title))
+    print(link)
+    num = input("Insert release number:\n>")
+    if num == "":
         return None
+    return num
 
-    # this could maybe fail and should be error checked for None
-    info = [e.string for e in entry_content.find("p").find_all("strong")]
 
-    # Sometimes there is no "Genres/Tags" info
-    i = 0
-    if len(info) == 4:
-        genres = None
-        i = -1
+def parse(repack_html: element.Tag, redact=False) -> dict | str:
+    # lots of bulky code to accommodate for the union return types in bs4
+    h1 = repack_html.find("h1", class_="entry-title")
+    match h1:
+        case element.Tag():
+            pass
+        case _:
+            return parse_error(0, None)
+
+    a = h1.findChild("a")
+    match a:
+        case element.Tag():
+            pass
+        case _:
+            return parse_error(1, None)
+
+    # these should always work without the need for None checks
+    title = a.string
+    link = a.attrs["href"]
+
+    entry_date = repack_html.find("time", class_="entry-date")
+    match entry_date:
+        case element.Tag():
+            pass
+        case _:
+            return parse_error(2, title)
+
+    entry_date_str = entry_date.attrs["datetime"][:10]
+    entry_date_fields = [int(x) for x in entry_date_str.split("-")]
+    # tzinfo is added so lsp doesn't complain about the unpacking
+    entry_date = datetime.datetime(*entry_date_fields, tzinfo=None)
+
+    entry_content = repack_html.find("div", class_="entry-content")
+    match entry_content:
+        case element.Tag():
+            pass
+        case _:
+            return parse_error(3, title)
+
+    # Sometimes the repack number causing the parsing to fail
+    release_num = entry_content.find("span")
+    match release_num:
+        case element.Tag():
+            pass
+        case _:
+            return parse_error(4, title)
+
+    # In some cases the release number has some additional formatting, flare, etc.
+    # if the number cannot be simply cast into an int, it gets passed into manual
+    # input. This is managed by the `manual_release_num` function.
+
+    release_num_str = release_num.string
+    if release_num_str is None:
+        num = manual_release_num(title, link)
+        if num is None:
+            return parse_error(6, title)
     else:
         try:
-            genres = info[0].split(", ")
-        except:
-            genres = None
+            # split is in case one has '#0000 Updated'
+            num = str(int(release_num_str.split(" ")[0][1:]))
+        except ValueError:
+            num = manual_release_num(title, link)
+            if num is None:
+                return parse_error(6, title)
 
-    try:
-        companies = info[1+i].split(", ")
-    except:
-        companies = None
+    # this could maybe fail and should be error checked for None
+    info_p = entry_content.find("p")
+    match info_p:
+        case element.Tag():
+            pass
+        case _:
+            return parse_error(7, title)
 
-    langs = info[2+i]
-    # repack size
-    size = info[4+i]
+    info = [e.string for e in info_p.find_all("strong")]
+
+    # Sometimes the `Genres/Tags` field is missing.
+    # In these cases we add it as `None`
+    if len(info) == 4:
+        info = [None] + info
+
+    genres = None if info[0] is None else info[0].split(", ")
+    companies = None if info[1] is None else info[1].split(", ")
+    langs = info[2]
+    size = info[4]
 
     if redact:
         link = "<REDACTED>"
 
     repack = {
-        "num": release_num,
+        "num": num,
         "title": title,
-        "date": upload_date,
+        "date": entry_date,
         "link": link,
         "genres": genres,
         "companies": companies,
